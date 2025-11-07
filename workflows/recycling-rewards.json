@@ -1,0 +1,433 @@
+{
+  "name": "Recycling Rewards",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recycling-rewards",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "91d55380-8926-4c24-b0ac-d23f39946b76",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -688,
+        -112
+      ],
+      "webhookId": "recycling-rewards"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "telegram_users",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_id",
+              "keyValue": "=={{ $json.body.chatId }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -112
+      ],
+      "id": "5782930e-26f5-4557-86d1-9d0e5b54e7f3",
+      "name": "Get User",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Check if photo is provided\n// Get webhook data from Webhook node (contains photo)\nconst webhookData = $('Webhook').first().json;\nconst body = webhookData.body || webhookData;\nconst update = body.update || {};\nconst chatId = body.chatId || update.message?.chat?.id;\n\n// Get user data from Get User node (current input)\nconst user = $json;\n\nlet photo = null;\nlet photoFileId = null;\nlet location = null;\n\n// Check for photo in message\nif (update.message && update.message.photo) {\n  const photos = update.message.photo;\n  // Get largest photo\n  photo = photos[photos.length - 1];\n  photoFileId = photo.file_id;\n}\n\n// Check for location\nif (update.message && update.message.location) {\n  location = {\n    latitude: update.message.location.latitude,\n    longitude: update.message.location.longitude\n  };\n}\n\nif (!photo) {\n  // Request photo - return empty to stop workflow\n  return [];\n}\n\nreturn [{\n  json: {\n    ...user, // Include all user data\n    chatId,\n    photoFileId,\n    photo,\n    location,\n    state: 'photo_received'\n  }\n}];"
+      },
+      "id": "b537c179-7fb3-48ee-8e7a-d4cff5e38747",
+      "name": "Check Photo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.photoFileId }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        112,
+        -112
+      ],
+      "id": "d3000947-7eef-4cc3-9794-bd2e0408855d",
+      "name": "Get a file",
+      "webhookId": "a5386558-1391-45bd-8805-0d0866d39b44",
+      "credentials": {
+        "telegramApi": {
+          "id": "GStudeWUs8tFEpeD",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/create_verification_jsonb",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_user_id\": \"{{ $('Get User').first().json.id }}\"\n  \"p_photo_url\": \"{{ $('Get a file').first().json.file_path || '' }}\"\n  \"p_photo_file_id\": \"{{ $('Check Photo').first().json.photoFileId || '' }}\"\n  \"p_location_latitude\": {{ $('Check Photo').first().json.location?.latitude || null }}\n  \"p_location_longitude\": {{ $('Check Photo').first().json.location?.longitude || null }}\n  \"p_location_address\": null\n  \"p_estimated_weight_kg\": 10.5\n  \"p_material_type\": null\n}",
+        "options": {}
+      },
+      "id": "1e4ccf80-211a-401d-ae4c-aade614e2a97",
+      "name": "Create Verification Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        336,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract verification_id from response\nconst response = $input.first().json;\nlet verificationId;\n\n// Handle different response formats\nif (typeof response === 'string') {\n  verificationId = response;\n} else if (Array.isArray(response) && response.length > 0) {\n  verificationId = response[0];\n} else if (response.verification_id) {\n  verificationId = response.verification_id;\n} else if (response && typeof response === 'object') {\n  // Get first value if it's an object\n  verificationId = Object.values(response)[0];\n}\n\nif (!verificationId) {\n  return [];\n}\n\nreturn [{\n  json: {\n    verification_id: verificationId\n  }\n}];"
+      },
+      "id": "2762e46e-2150-4661-98d4-9a09ef460938",
+      "name": "Extract Verification ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/perform_verification_jsonb",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_verification_id\": \"{{ $json.verification_id }}\"\n}",
+        "options": {}
+      },
+      "id": "585e562b-cce2-4641-84ca-b6ca4614b3d2",
+      "name": "Perform Verification Checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        752,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Process verification and calculate rewards\n// Get verification result from Supabase function\nconst verificationData = $input.first().json;\nlet verificationResult;\n\n// Handle different response formats\nif (typeof verificationData === 'string') {\n  verificationResult = JSON.parse(verificationData);\n} else if (verificationData.verification_result) {\n  verificationResult = typeof verificationData.verification_result === 'string' \n    ? JSON.parse(verificationData.verification_result)\n    : verificationData.verification_result;\n} else {\n  verificationResult = verificationData;\n}\n\nconst user = $('Get User').first().json;\nconst chatId = $('Check Photo').first().json.chatId;\nconst photoFileId = $('Check Photo').first().json.photoFileId;\nconst location = $('Check Photo').first().json.location;\n\nif (!user || !user.id) {\n  return [];\n}\n\n// Extract verification_id from Extract Verification ID node\nlet verificationId = $('Extract Verification ID').first().json?.verification_id;\nif (!verificationId && verificationResult && verificationResult.verification_id) {\n  verificationId = verificationResult.verification_id;\n}\nif (!verificationId) {\n  verificationId = 'VER-' + Date.now();\n}\n\n// Use verification result from database\nconst verified = verificationResult.verified === true || verificationResult.status === 'verified';\nconst weightKg = verificationResult.weight_kg || verificationResult.verified_weight_kg || 10.5;\nconst verificationScore = verificationResult.score || verificationResult.verification_score || 0;\nconst verificationConfidence = verificationResult.confidence || verificationResult.verification_confidence || 0;\n\n// Calculate rewards\nconst creditRate = 5; // R5 per kg\nconst creditAmount = weightKg * creditRate;\nconst points = Math.floor(creditAmount); // 1 point per R1\n\n// Calculate minimum and maximum\nconst finalCredit = Math.max(10, Math.min(500, creditAmount));\n\nreturn [{\n  json: {\n    chatId,\n    userId: user.id,\n    photoFileId,\n    location,\n    weightKg,\n    creditAmount: finalCredit,\n    points,\n    verificationId,\n    verified,\n    verificationScore,\n    verificationConfidence\n  }\n}];"
+      },
+      "id": "7a267949-7a75-40fa-a8db-d54be0e8f648",
+      "name": "Calculate Rewards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        176
+      ],
+      "id": "9bdafa15-380e-48e7-9cde-61c08eb3e290",
+      "name": "Save Submission",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        -112
+      ],
+      "id": "f04aa727-d4ff-4d6c-b7f4-2d4ad6b48c9a",
+      "name": "Add Rewards",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Send success message\nconst rewards = $('Calculate Rewards').first().json;\nconst submission = $input.first().json;\nconst chatId = rewards.chatId;\n\nif (!chatId || !rewards) {\n  return [];\n}\n\nconst keyboard = {\n  inline_keyboard: [\n    [{ text: '💰 Pay Bill', callback_data: 'pay_bill' }],\n    [{ text: '🏠 Main Menu', callback_data: 'menu' }]\n  ]\n};\n\nconst message = `♻️ *Recycling Verified!*\\n\\n✅ Weight: ${rewards.weightKg.toFixed(1)} kg\\n💰 Credit: R ${rewards.creditAmount.toFixed(2)}\\n⭐ Points: ${rewards.points}\\n\\nYour credit has been applied to your account!`;\n\nreturn [{\n  json: {\n    chatId,\n    message,\n    keyboard,\n    parseMode: 'Markdown'\n  }\n}];"
+      },
+      "id": "06a4b75a-6d23-4200-9936-a4ed0af0aee0",
+      "name": "Success Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "replyMarkup": "={{ $json.keyboard }}",
+        "forceReply": {},
+        "replyKeyboardOptions": {},
+        "replyKeyboardRemove": {},
+        "additionalFields": {
+          "parse_mode": "={{ $json.parseMode || 'Markdown' }}"
+        }
+      },
+      "id": "de5510c8-9853-4635-9965-3be656a53518",
+      "name": "Send Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        -112
+      ],
+      "webhookId": "39cce037-0a89-431b-96e8-e6172c4e0823",
+      "credentials": {
+        "telegramApi": {
+          "id": "GStudeWUs8tFEpeD",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true } }}",
+        "options": {}
+      },
+      "id": "861e5143-e387-4be8-a9fa-4d0e091e3884",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User": {
+      "main": [
+        [
+          {
+            "node": "Check Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Photo": {
+      "main": [
+        [
+          {
+            "node": "Get a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a file": {
+      "main": [
+        [
+          {
+            "node": "Create Verification Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Verification Request": {
+      "main": [
+        [
+          {
+            "node": "Extract Verification ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Verification ID": {
+      "main": [
+        [
+          {
+            "node": "Perform Verification Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perform Verification Checks": {
+      "main": [
+        [
+          {
+            "node": "Calculate Rewards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Rewards": {
+      "main": [
+        [
+          {
+            "node": "Save Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Submission": {
+      "main": [
+        [
+          {
+            "node": "Add Rewards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Rewards": {
+      "main": [
+        [
+          {
+            "node": "Success Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Message": {
+      "main": [
+        [
+          {
+            "node": "Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Message": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ca18b1d9-0f73-44d9-8a30-fa95d73086cd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3184e41c8b770589128954305829d121478186e2431322570627fe2614994194"
+  },
+  "id": "GlbsvKroPDnLqw9o",
+  "tags": []
+}

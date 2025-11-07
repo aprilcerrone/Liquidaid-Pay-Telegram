@@ -1,0 +1,279 @@
+{
+  "name": "Bill Notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily 9 AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "bills",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "due_date",
+              "condition": "gte",
+              "keyValue": "={{ $now.toISO() }}"
+            },
+            {
+              "keyName": "due_date",
+              "condition": "lte",
+              "keyValue": "={{ $now.plus({ days: 7 }).toISO() }}"
+            },
+            {
+              "keyName": "paid",
+              "condition": "eq",
+              "keyValue": "false"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        -48
+      ],
+      "id": "get-bills-due-soon",
+      "name": "Get Bills Due Soon",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "bills",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "due_date",
+              "condition": "lt",
+              "keyValue": "={{ $now.toISO() }}"
+            },
+            {
+              "keyName": "paid",
+              "condition": "eq",
+              "keyValue": "false"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        144
+      ],
+      "id": "get-overdue-bills",
+      "name": "Get Overdue Bills",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "b1b1e61a-9067-436a-8840-01f398962649",
+      "name": "Merge Bills",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        -416,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Add notification type and calculate days\nconst bill = $json;\n\nif (!bill || !bill.due_date) {\n  return [];\n}\n\nconst dueDate = new Date(bill.due_date);\nconst now = new Date();\nconst daysUntilDue = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));\n\nlet notificationType = 'reminder';\nif (daysUntilDue < 0) {\n  notificationType = 'overdue';\n} else if (daysUntilDue === 0) {\n  notificationType = 'due_today';\n} else if (daysUntilDue <= 3) {\n  notificationType = 'due_soon';\n}\n\nreturn [{\n  json: {\n    ...bill,\n    notificationType,\n    daysUntilDue\n  }\n}];"
+      },
+      "id": "process-bills",
+      "name": "Process Bills",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "telegram_users",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "=={{ $json.user_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        48
+      ],
+      "id": "get-user",
+      "name": "Get User",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2U3jRjLCgncer3Pf",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format notification message\nconst bill = $('Process Bills').first().json;\nconst user = $json;\n\nif (!user || !user.chat_id || !bill) {\n  return [];\n}\n\nconst { notificationType, daysUntilDue, amount, description, due_date } = bill;\n\nlet emoji = '📅';\nlet urgency = '';\n\nswitch (notificationType) {\n  case 'overdue':\n    emoji = '⚠️';\n    urgency = `*OVERDUE* - ${Math.abs(daysUntilDue)} days past due`;\n    break;\n  case 'due_today':\n    emoji = '🚨';\n    urgency = '*DUE TODAY*';\n    break;\n  case 'due_soon':\n    emoji = '⏰';\n    urgency = `Due in ${daysUntilDue} days`;\n    break;\n  default:\n    urgency = `Due in ${daysUntilDue} days`;\n}\n\nconst message = `${emoji} *Bill Notification*\\n\\n${urgency}\\n\\n📋 ${description || 'Bill'}\\n💰 Amount: R ${amount?.toFixed(2) || '0.00'}\\n📅 Due Date: ${new Date(due_date).toLocaleDateString()}\\n\\nPlease pay your bill to avoid any late fees.`;\n\nreturn [{\n  json: {\n    chatId: user.chat_id,\n    message,\n    parseMode: 'Markdown'
+  }\n}];"
+      },
+      "id": "format-notification",
+      "name": "Format Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "={{ $json.parseMode || 'Markdown' }}"
+        }
+      },
+      "id": "send-notification",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        352,
+        48
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "GStudeWUs8tFEpeD",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 9 AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Bills Due Soon",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Overdue Bills",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bills Due Soon": {
+      "main": [
+        [
+          {
+            "node": "Merge Bills",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Overdue Bills": {
+      "main": [
+        [
+          {
+            "node": "Merge Bills",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Bills": {
+      "main": [
+        [
+          {
+            "node": "Process Bills",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Bills": {
+      "main": [
+        [
+          {
+            "node": "Get User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User": {
+      "main": [
+        [
+          {
+            "node": "Format Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "DmI090uTUTcK4gFw",
+  "tags": []
+}
